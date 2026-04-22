@@ -69,8 +69,8 @@ def is_timestamp(s):
     return bool(match(pattern, str(s)))
 
 from qreader import QReader
-qreader = cv2.wechat_qrcode.WeChatQRCode("detect.prototxt", "detect.caffemodel", "sr.prototxt", "sr.caffemodel")
-# qreader = QReader()
+# qreader = cv2.wechat_qrcode.WeChatQRCode("detect.prototxt", "detect.caffemodel", "sr.prototxt", "sr.caffemodel")
+qreader = QReader()
 def read_qrcode(filepath):
     from cv2 import imread, cvtColor
 
@@ -86,13 +86,13 @@ def read_qrcode(filepath):
                 return obj
         return ''
     
-    decoded_text = qreader.detectAndDecode(img)
+    decoded_text = qreader.detect_and_decode(img)
     if result := find_ts(decoded_text):
         return result
     
     # print("read_qrcode(): RGB failed.  Trying Grayscale")
     img = cvtColor(img, cv2.COLOR_BGR2GRAY)
-    decoded_text = qreader.detectAndDecode(img)
+    decoded_text = qreader.detect_and_decode(img)
     if result := find_ts(decoded_text):
         return result
     
@@ -109,7 +109,7 @@ def read_qrcode(filepath):
             
             chunk = img[y:y_end, x:x_end]
             
-            chunk_decoded = qreader.detectAndDecode(chunk)
+            chunk_decoded = qreader.detect_and_decode(chunk)
 
             if result := find_ts(chunk_decoded):
                 return result
