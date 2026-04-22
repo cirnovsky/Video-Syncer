@@ -24,7 +24,7 @@ import filetype
 import cv2
 import sys
 from typing import Tuple, Optional
-from collections import defaultdict
+from PIL import Image
 
 # Pyzbar fails to find libzbar on MacOS
 import ctypes.util
@@ -36,8 +36,6 @@ def patched_find_library(name):
             return mac_silicon_path
     return _original_find_library(name)
 ctypes.util.find_library = patched_find_library
-
-from pyzbar.pyzbar import decode
 
 def build_parser(argv):
     parser = argparse.ArgumentParser(prog="Video Synchronizer")
@@ -55,6 +53,7 @@ def is_image(path, file):
 
 def get_images(folder):
     files = os.listdir(folder)
+    files = [file for file in files if os.path.isfile(os.path.join(folder, file))]
     files.sort()
     images = []
     for file in files:
@@ -66,14 +65,15 @@ def get_images(folder):
 def is_timestamp(s):
     from re import match
     
-    pattern = r"^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d.(\d+)$"
+    pattern = r"^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d\.(\d+)$"
     return bool(match(pattern, str(s)))
 
+from qreader import QReader
+qreader = cv2.wechat_qrcode.WeChatQRCode("detect.prototxt", "detect.caffemodel", "sr.prototxt", "sr.caffemodel")
+# qreader = QReader()
 def read_qrcode(filepath):
-    from qreader import QReader
     from cv2 import imread, cvtColor
 
-    qreader = QReader()
     img = imread(filepath)
     if img is None:
         print("read_qrcode(): Cannot read file {}".format(filepath))
@@ -82,23 +82,21 @@ def read_qrcode(filepath):
     def find_ts(decoded):
         for obj in decoded:
             if is_timestamp(obj):
-                print("read_qrcode(): QR Code found successfully. Content '{}'".format(obj))
+                # print("read_qrcode(): QR Code found successfully. Content '{}'".format(obj))
                 return obj
         return ''
     
-    decoded_text = qreader.detect_and_decode(image=img)
-    result = find_ts(decoded_text)
-    if result:
+    decoded_text = qreader.detectAndDecode(img)
+    if result := find_ts(decoded_text):
         return result
     
-    print("read_qrcode(): RGB failed.  Trying Grayscale")
+    # print("read_qrcode(): RGB failed.  Trying Grayscale")
     img = cvtColor(img, cv2.COLOR_BGR2GRAY)
-    decoded_text = qreader.detect_and_decode(image=img)
-    result = find_ts(decoded_text)
-    if result:
+    decoded_text = qreader.detectAndDecode(img)
+    if result := find_ts(decoded_text):
         return result
     
-    print("read_qrcode(): Failed to read QR Code. Trying cropping...")
+    # print("read_qrcode(): Failed to read QR Code. Trying cropping...")
     height, width = img.shape
     window_size = int(max(height, width) * .25)
     overlap = int(window_size * 0.4)
@@ -106,19 +104,17 @@ def read_qrcode(filepath):
     
     for y in range(0, height, step):
         for x in range(0, width, step):
-            # Calculate the boundaries for the current chunk
             y_end = min(y + window_size, height)
             x_end = min(x + window_size, width)
             
             chunk = img[y:y_end, x:x_end]
             
-            # Scan the chunk
-            chunk_decoded = qreader.detect_and_decode(image=chunk)
+            chunk_decoded = qreader.detectAndDecode(chunk)
 
-            result = find_ts(chunk_decoded)
-            if result:
+            if result := find_ts(chunk_decoded):
                 return result
-                    
+
+    # print("read_qrcode(): Failed to read QR Code.")
     return ''
 
 def read_timestamp(images):
@@ -127,37 +123,51 @@ def read_timestamp(images):
     for image in tqdm(images):
         texts.append(read_qrcode(image))
 
-    print(texts)
+    print("read_timestamp(): Read {}".format(texts))
     return texts
 
-def get_shared_timestamps(imgs1, imgs2):
-    mp = defaultdict(list)
+def get_shared_timestamps(images1, images2):
+    mp = {}
+
+    ts1 = read_timestamp(images1)
+    ts2 = read_timestamp(images2)
     
-    for i, ts in enumerate(read_timestamp(imgs1)):
-        if ts: # Only add to dict if a timestamp was actually found
-            mp[ts].append((i, 1))
+    for i, ts in enumerate(ts1):
+        if ts and ts not in mp: # Only add to dict if a timestamp was actually found
+            mp[ts] = [i, None]
             
-    for i, ts in enumerate(read_timestamp(imgs2)):
-        if ts:
-            mp[ts].append((i, 2))
+    for i, ts in enumerate(ts2):
+        if ts and ts in mp:
+            mp[ts][1] = i
             
-    shared_ts = [(value[0][0], value[1][0]) for value in mp.values() if len(value) == 2]
+    shared_ts = [value for value in mp.values() if value[1] is not None]
     return shared_ts
 
 def get_time_by_index(index: int, skip_frames: int, frame_rate: int):
     index *= skip_frames
     return index / frame_rate
+
+def time_offset(folder1, folder2, skip_frames, frame_rate) -> Optional[float]:
+    """
+    Returns:
+        The time video 2 is ahead of video 1, in seconds.
+        -ive means behind.
+    """
+    images1 = get_images(folder1)[::skip_frames]
+    images2 = get_images(folder2)[::skip_frames]
     
-def pivot_time(folder1, folder2, skip_frames, frame_rate) -> Tuple[float, float]:
-    imgs1 = get_images(folder1)[::skip_frames]
-    imgs2 = get_images(folder2)[::skip_frames]
-    
-    shared_ts = get_shared_timestamps(imgs1, imgs2)
+    shared_ts = get_shared_timestamps(images1, images2)
     if shared_ts:
-        t1 = get_time_by_index(shared_ts[0][0], skip_frames, frame_rate)
-        t2 = get_time_by_index(shared_ts[0][1], skip_frames, frame_rate)
-        return (t1, t2)
-    return (-1, -1)
+        offsets = []
+        for t1, t2 in shared_ts:
+            t1 = get_time_by_index(t1, skip_frames, frame_rate)
+            t2 = get_time_by_index(t2, skip_frames, frame_rate)
+            offsets.append(t2 - t1)
+        if len(offsets) > 10:
+            offsets = sorted(offsets)[1:-1]
+            return sum(offsets) / len(offsets)
+        return sorted(offsets)[len(offsets)//2]
+    return None
 
 def run_test(test_path="./tests"):
     files = os.listdir(test_path)
@@ -177,6 +187,9 @@ if __name__ == "__main__":
     skip_frames = args.skip_frames
     frame_rate = args.frame_rate
     
-    t1, t2 = pivot_time(folder1, folder2, skip_frames, frame_rate)
+    offset = time_offset(folder1, folder2, skip_frames, frame_rate)
 
-    print("SUCCESS: {} {}".format(t1, t2))
+    if offset is None:
+        print("FAIL: Could not sync {} and {}".format(folder1, folder2))
+    else:
+        print("SUCCESS: <{}> is {} seconds behind <{}>".format(folder1, offset, folder2))
