@@ -43,6 +43,10 @@ def build_parser(argv):
     parser.add_argument("folder2", help="Path to the second image folder")
     parser.add_argument("-s", "--skip-frames", type=int, default=1, help="Process every Nth frame")
     parser.add_argument("-f", "--frame-rate", type=int, default=30, help="Frames per second of both videos")
+    parser.add_argument("-o1", "--offset1", type=int, default=0, help="Frame offset for video 1")
+    parser.add_argument("-o2", "--offset2", type=int, default=0, help="Frame offset for video 2")
+    parser.add_argument("-d1", "--duration1", type=int, default=-1, help="Frame duration for video 1")
+    parser.add_argument("-d2", "--duration2", type=int, default=-2, help="Frame duration for video 2")
     return parser
 
 def is_image(path, file):
@@ -122,6 +126,7 @@ def read_timestamp(images):
     texts = []
     for image in tqdm(images):
         texts.append(read_qrcode(image))
+    texts = [text[:-5] for text in texts]
 
     print("read_timestamp(): Read {}".format(texts))
     return texts
@@ -131,7 +136,7 @@ def get_shared_timestamps(images1, images2):
 
     ts1 = read_timestamp(images1)
     ts2 = read_timestamp(images2)
-    
+
     for i, ts in enumerate(ts1):
         if ts and ts not in mp: # Only add to dict if a timestamp was actually found
             mp[ts] = [i, None]
@@ -147,22 +152,34 @@ def get_time_by_index(index: int, skip_frames: int, frame_rate: int):
     index *= skip_frames
     return index / frame_rate
 
-def time_offset(folder1, folder2, skip_frames, frame_rate) -> Optional[float]:
+def time_offset(folder1, folder2, offset1, offset2, duration1, duration2, skip_frames, frame_rate) -> Optional[float]:
     """
     Returns:
         The time video 2 is ahead of video 1, in seconds.
         -ive means behind.
     """
-    images1 = get_images(folder1)[::skip_frames]
-    images2 = get_images(folder2)[::skip_frames]
+    images1 = get_images(folder1)
+    if duration1 < 0:
+        images1 = images1[offset1::skip_frames]
+    else:
+        images1 = images1[offset1:offset1+duration1:skip_frames]
+    images2 = get_images(folder2)
+    if duration2 < 0:
+        images2 = images2[offset2::skip_frames]
+    else:
+        images2 = images2[offset2:offset2+duration2:skip_frames]
     
     shared_ts = get_shared_timestamps(images1, images2)
     if shared_ts:
         offsets = []
         for t1, t2 in shared_ts:
-            t1 = get_time_by_index(t1, skip_frames, frame_rate)
-            t2 = get_time_by_index(t2, skip_frames, frame_rate)
-            offsets.append(t2 - t1)
+            abs_frame1 = offset1 + (t1 * skip_frames)
+            abs_frame2 = offset2 + (t2 * skip_frames)
+            
+            time1 = abs_frame1 / frame_rate
+            time2 = abs_frame2 / frame_rate
+            
+            offsets.append(time2 - time1)
         if len(offsets) > 10:
             offsets = sorted(offsets)[1:-1]
             return sum(offsets) / len(offsets)
@@ -177,17 +194,21 @@ def run_test(test_path="./tests"):
 
 if __name__ == "__main__":
 
-    run_test()
+    # run_test()
 
     parser = build_parser(sys.argv)
     args = parser.parse_args()
 
     folder1 = args.folder1
     folder2 = args.folder2
+    offset1 = args.offset1
+    offset2 = args.offset2
+    duration1 = args.duration1
+    duration2 = args.duration2
     skip_frames = args.skip_frames
     frame_rate = args.frame_rate
     
-    offset = time_offset(folder1, folder2, skip_frames, frame_rate)
+    offset = time_offset(folder1, folder2, offset1, offset2, duration1, duration2, skip_frames, frame_rate)
 
     if offset is None:
         print("FAIL: Could not sync {} and {}".format(folder1, folder2))
