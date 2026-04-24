@@ -126,7 +126,15 @@ def read_timestamp(images):
     texts = []
     for image in tqdm(images):
         texts.append(read_qrcode(image))
-    texts = [text[:-5] for text in texts]
+
+    def round_ts(ts):
+        if ts:
+            tmp, second = ts.split('.')
+            second = round(int(second), -5)
+            return tmp + '.' + str(second)
+        return ts
+        
+    texts = [round_ts(text) for text in texts]
 
     print("read_timestamp(): Read {}".format(texts))
     return texts
