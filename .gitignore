@@ -11,3 +11,6 @@ wheels/
 
 **/.DS_Store
 30fps.MOV
+
+video_frames
+checker_results
