@@ -130,7 +130,7 @@ def read_timestamp(images):
     def round_ts(ts):
         if ts:
             tmp, second = ts.split('.')
-            second = round(int(second), -5)
+            second = round(int(second), -4)
             return tmp + '.' + str(second)
         return ts
         
